@@ -1,11 +1,10 @@
 require('dotenv').config();
-const OpenAI = require('openai');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 const axios = require('axios');
 
-// Configuration OpenAI
-const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY
-});
+// Configuration Gemini
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
 // Fonction pour obtenir la météo (même que dans index.js)
 async function getWeather(city) {
@@ -19,101 +18,53 @@ async function getWeather(city) {
     }
 }
 
-// Fonction outil pour l'agent IA
-const weatherTool = {
-    type: "function",
-    function: {
-        name: "get_weather",
-        description: "Obtient les informations météorologiques actuelles pour une ville donnée",
-        parameters: {
-            type: "object",
-            properties: {
-                city: {
-                    type: "string",
-                    description: "Le nom de la ville pour laquelle obtenir la météo"
-                }
-            },
-            required: ["city"]
-        }
-    }
-};
-
-// Agent IA principal
+// Agent IA principal avec Gemini
 async function aiWeatherAgent(userInput) {
     try {
-        const completion = await openai.chat.completions.create({
-            model: "gpt-3.5-turbo",
-            messages: [
-                {
-                    role: "system",
-                    content: `Tu es un assistant météo intelligent. Tu peux répondre aux questions sur la météo en utilisant l'outil get_weather.
-                    
-Réponds de manière naturelle et conversationnelle. Si l'utilisateur demande la météo, utilise l'outil pour obtenir les informations puis réponds de façon claire et amicale.
+        // D'abord, analyser si c'est une question météo et extraire la ville
+        const extractPrompt = `Analyse ce message et extrait le nom de la ville si c'est une question météo.
+        
+Message: "${userInput}"
 
-Exemples de réponses :
-- "Il fait 25°C à Paris avec un ciel dégagé"
-- "À Lyon, la température est de 18°C avec de la pluie"
-- "Il fait actuellement 22°C à Marseille avec quelques nuages"`
-                },
-                {
-                    role: "user",
-                    content: userInput
-                }
-            ],
-            tools: [weatherTool],
-            tool_choice: "auto"
-        });
+Si c'est une question météo, réponds SEULEMENT avec le nom de la ville.
+Si ce n'est pas une question météo, réponds "NON_METEO".
 
-        const message = completion.choices[0].message;
+Exemples:
+- "Il fait combien à Paris ?" → Paris
+- "Quel temps à Lyon ?" → Lyon  
+- "Bonjour comment ça va ?" → NON_METEO`;
 
-        // Si l'IA veut utiliser un outil
-        if (message.tool_calls) {
-            const toolCall = message.tool_calls[0];
-            
-            if (toolCall.function.name === "get_weather") {
-                const args = JSON.parse(toolCall.function.arguments);
-                const weatherData = await getWeather(args.city);
-                
-                // Deuxième appel pour générer la réponse finale
-                const finalCompletion = await openai.chat.completions.create({
-                    model: "gpt-3.5-turbo",
-                    messages: [
-                        {
-                            role: "system",
-                            content: "Tu es un assistant météo. Réponds de manière naturelle et conversationnelle aux questions météo."
-                        },
-                        {
-                            role: "user",
-                            content: userInput
-                        },
-                        {
-                            role: "assistant",
-                            content: null,
-                            tool_calls: [toolCall]
-                        },
-                        {
-                            role: "tool",
-                            tool_call_id: toolCall.id,
-                            content: JSON.stringify({
-                                city: weatherData.name,
-                                temperature: Math.round(weatherData.main.temp),
-                                description: weatherData.weather[0].description,
-                                humidity: weatherData.main.humidity,
-                                windSpeed: weatherData.wind.speed
-                            })
-                        }
-                    ]
-                });
+        const extractResult = await model.generateContent(extractPrompt);
+        const cityExtracted = extractResult.response.text().trim();
 
-                return finalCompletion.choices[0].message.content;
-            }
+        if (cityExtracted === "NON_METEO") {
+            return "Je suis un assistant météo. Posez-moi une question sur la météo d'une ville ! Exemple : 'Il fait combien à Paris ?'";
         }
 
-        // Si pas d'outil nécessaire, retourner la réponse directe
-        return message.content;
+        // Obtenir les données météo
+        const weatherData = await getWeather(cityExtracted);
+        
+        // Générer une réponse naturelle avec les données météo
+        const responsePrompt = `Tu es un assistant météo sympathique. Réponds de manière naturelle et conversationnelle à cette question météo.
+
+Question originale: "${userInput}"
+Ville: ${weatherData.name}
+Température: ${Math.round(weatherData.main.temp)}°C
+Conditions: ${weatherData.weather[0].description}
+Humidité: ${weatherData.main.humidity}%
+Vent: ${weatherData.wind.speed} m/s
+
+Génère une réponse naturelle et amicale. Garde ça court et clair.
+
+Exemples de style:
+- "Il fait 25°C à Paris avec un ciel dégagé"
+- "À Lyon, la température est de 18°C avec de la pluie"`;
+
+        const finalResult = await model.generateContent(responsePrompt);
+        return finalResult.response.text().trim();
 
     } catch (error) {
-        console.error('Erreur Agent IA:', error);
+        console.error('Erreur Agent IA Gemini:', error);
         return "Désolé, je n'ai pas pu traiter votre demande. Veuillez réessayer.";
     }
 }

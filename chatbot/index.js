@@ -20,8 +20,8 @@ if (!OPENWEATHER_API_KEY) {
     process.exit(1);
 }
 
-if (!process.env.OPENAI_API_KEY) {
-    console.error('❌ OPENAI_API_KEY is required for AI agent');
+if (!process.env.GEMINI_API_KEY) {
+    console.error('❌ GEMINI_API_KEY is required for AI agent');
     process.exit(1);
 }
 
@@ -147,11 +147,37 @@ bot.on('message', async (msg) => {
         // Envoyer un message "typing..." 
         bot.sendChatAction(chatId, 'typing');
         
-        // Utiliser l'agent IA pour traiter la demande
-        const response = await aiWeatherAgent(text);
-        bot.sendMessage(chatId, response);
-        
-        console.log(`✅ Réponse IA envoyée à l'utilisateur ${msg.from.first_name || 'Inconnu'}`);
+        // Essayer d'abord l'agent IA, sinon utiliser la méthode classique
+        try {
+            const response = await aiWeatherAgent(text);
+            bot.sendMessage(chatId, response);
+            console.log(`✅ Réponse IA envoyée à l'utilisateur ${msg.from.first_name || 'Inconnu'}`);
+        } catch (aiError) {
+            console.log(`⚠️ Agent IA indisponible, utilisation méthode classique`);
+            
+            // Fallback vers la méthode classique
+            const city = extractCityFromMessage(text);
+            
+            if (!city) {
+                const helpMessage = `❓ **Je n'ai pas compris votre demande**
+
+Essayez plutôt :
+• "météo à Paris"
+• "temps à Lyon"
+• "quelle est la météo à Tokyo ?"
+
+Ou tapez /start pour revoir les instructions.`;
+
+                bot.sendMessage(chatId, helpMessage, { parse_mode: 'Markdown' });
+                return;
+            }
+
+            const weatherData = await getWeather(city);
+            const response = formatWeatherResponse(weatherData);
+            bot.sendMessage(chatId, response, { parse_mode: 'Markdown' });
+            
+            console.log(`✅ Météo envoyée pour ${city} à l'utilisateur ${msg.from.first_name || 'Inconnu'}`);
+        }
         
     } catch (error) {
         const errorMessage = `❌ **Erreur lors du traitement de votre demande**
@@ -159,7 +185,7 @@ bot.on('message', async (msg) => {
 Service temporairement indisponible. Veuillez réessayer dans quelques instants.`;
 
         bot.sendMessage(chatId, errorMessage, { parse_mode: 'Markdown' });
-        console.error(`❌ Erreur Agent IA:`, error.message);
+        console.error(`❌ Erreur:`, error.message);
     }
 });
 
