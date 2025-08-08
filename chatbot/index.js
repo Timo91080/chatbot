@@ -2,6 +2,7 @@ require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 const axios = require('axios');
 const express = require('express');
+const { aiWeatherAgent } = require('./ai-agent');
 
 // Configuration
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
@@ -16,6 +17,11 @@ if (!TELEGRAM_BOT_TOKEN) {
 
 if (!OPENWEATHER_API_KEY) {
     console.error('❌ OPENWEATHER_API_KEY is required');
+    process.exit(1);
+}
+
+if (!process.env.OPENAI_API_KEY) {
+    console.error('❌ OPENAI_API_KEY is required for AI agent');
     process.exit(1);
 }
 
@@ -137,53 +143,23 @@ bot.on('message', async (msg) => {
         return;
     }
 
-    // Extraire la ville depuis le message
-    const city = extractCityFromMessage(text);
-    
-    if (!city) {
-        const helpMessage = `❓ **Je n'ai pas compris votre demande**
-
-Essayez plutôt :
-• "météo à Paris"
-• "temps à Lyon"
-• "quelle est la météo à Tokyo ?"
-
-Ou tapez /start pour revoir les instructions.`;
-
-        bot.sendMessage(chatId, helpMessage, { parse_mode: 'Markdown' });
-        return;
-    }
-
     try {
         // Envoyer un message "typing..." 
         bot.sendChatAction(chatId, 'typing');
         
-        // Obtenir les données météo
-        const weatherData = await getWeather(city);
+        // Utiliser l'agent IA pour traiter la demande
+        const response = await aiWeatherAgent(text);
+        bot.sendMessage(chatId, response);
         
-        // Formater et envoyer la réponse
-        const response = formatWeatherResponse(weatherData);
-        bot.sendMessage(chatId, response, { parse_mode: 'Markdown' });
-        
-        console.log(`✅ Météo envoyée pour ${city} à l'utilisateur ${msg.from.first_name || 'Inconnu'}`);
+        console.log(`✅ Réponse IA envoyée à l'utilisateur ${msg.from.first_name || 'Inconnu'}`);
         
     } catch (error) {
-        let errorMessage = `❌ **Erreur lors de la récupération de la météo**
+        const errorMessage = `❌ **Erreur lors du traitement de votre demande**
 
-`;
-
-        if (error.response?.status === 404) {
-            errorMessage += `La ville "${city}" n'a pas été trouvée. 
-            
-Vérifiez l'orthographe ou essayez avec une autre ville.`;
-        } else {
-            errorMessage += `Service temporairement indisponible.
-            
-Veuillez réessayer dans quelques instants.`;
-        }
+Service temporairement indisponible. Veuillez réessayer dans quelques instants.`;
 
         bot.sendMessage(chatId, errorMessage, { parse_mode: 'Markdown' });
-        console.error(`❌ Erreur météo pour ${city}:`, error.message);
+        console.error(`❌ Erreur Agent IA:`, error.message);
     }
 });
 
